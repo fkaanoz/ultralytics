@@ -1,0 +1,9 @@
+path: ./dataset   # root dataset directory
+
+train: train/images
+val: valid/images
+
+nc: 1 
+
+names:
+  0: Drone  

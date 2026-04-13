@@ -107,50 +107,48 @@ class DFLoss(nn.Module):
 
 
 class BboxLoss(nn.Module):
-    """Criterion class for computing training losses for bounding boxes."""
+    """Criterion class for computing training losses during training."""
 
-    def __init__(self, reg_max: int = 16):
+    def __init__(self, reg_max, use_dfl=False):
         """Initialize the BboxLoss module with regularization maximum and DFL settings."""
         super().__init__()
-        self.dfl_loss = DFLoss(reg_max) if reg_max > 1 else None
+        self.reg_max = reg_max
+        self.use_dfl = use_dfl
 
-    def forward(
-        self,
-        pred_dist: torch.Tensor,
-        pred_bboxes: torch.Tensor,
-        anchor_points: torch.Tensor,
-        target_bboxes: torch.Tensor,
-        target_scores: torch.Tensor,
-        target_scores_sum: torch.Tensor,
-        fg_mask: torch.Tensor,
-        imgsz: torch.Tensor,
-        stride: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Compute IoU and DFL losses for bounding boxes."""
+    def forward(self, pred_dist, pred_bboxes, anchor_points, target_bboxes, target_scores, target_scores_sum, fg_mask,  *args):
+        print("BBOX FIXXXXX *******",len(args), args)
+        """IoU loss."""
         weight = target_scores.sum(-1)[fg_mask].unsqueeze(-1)
-        iou = bbox_iou(pred_bboxes[fg_mask], target_bboxes[fg_mask], xywh=False, CIoU=True)
-        loss_iou = ((1.0 - iou) * weight).sum() / target_scores_sum
+        iou = bbox_iou(pred_bboxes[fg_mask], target_bboxes[fg_mask], xywh=False, SDIoU=True, delta=0.5)  
+        loss = ((1.0 - iou) * weight).sum() / target_scores_sum    #  SDB loss
 
         # DFL loss
-        if self.dfl_loss:
-            target_ltrb = bbox2dist(anchor_points, target_bboxes, self.dfl_loss.reg_max - 1)
-            loss_dfl = self.dfl_loss(pred_dist[fg_mask].view(-1, self.dfl_loss.reg_max), target_ltrb[fg_mask]) * weight
+        if self.use_dfl:
+            target_ltrb = bbox2dist(anchor_points, target_bboxes, self.reg_max)
+            loss_dfl = self._df_loss(pred_dist[fg_mask].view(-1, self.reg_max + 1), target_ltrb[fg_mask]) * weight
             loss_dfl = loss_dfl.sum() / target_scores_sum
         else:
-            target_ltrb = bbox2dist(anchor_points, target_bboxes)
-            # normalize ltrb by image size
-            target_ltrb = target_ltrb * stride
-            target_ltrb[..., 0::2] /= imgsz[1]
-            target_ltrb[..., 1::2] /= imgsz[0]
-            pred_dist = pred_dist * stride
-            pred_dist[..., 0::2] /= imgsz[1]
-            pred_dist[..., 1::2] /= imgsz[0]
-            loss_dfl = (
-                F.l1_loss(pred_dist[fg_mask], target_ltrb[fg_mask], reduction="none").mean(-1, keepdim=True) * weight
-            )
-            loss_dfl = loss_dfl.sum() / target_scores_sum
+            loss_dfl = torch.tensor(0.0).to(pred_dist.device)
 
-        return loss_iou, loss_dfl
+        return loss, loss_dfl
+
+    @staticmethod
+    def _df_loss(pred_dist, target):
+        """
+        Return sum of left and right DFL losses.
+
+        Distribution Focal Loss (DFL) proposed in Generalized Focal Loss
+        https://ieeexplore.ieee.org/document/9792391
+        """
+        tl = target.long()  # target left
+        tr = tl + 1  # target right
+        wl = tr - target  # weight left
+        wr = 1 - wl  # weight right
+        return (
+            F.cross_entropy(pred_dist, tl.view(-1), reduction="none").view(tl.shape) * wl
+            + F.cross_entropy(pred_dist, tr.view(-1), reduction="none").view(tl.shape) * wr
+        ).mean(-1, keepdim=True)
+
 
 
 class RLELoss(nn.Module):

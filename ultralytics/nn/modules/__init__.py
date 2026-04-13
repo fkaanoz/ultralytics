@@ -106,6 +106,10 @@ from .transformer import (
     TransformerLayer,
 )
 
+
+from .pconv import APC2f, APBottleneck, PConv
+
+
 __all__ = (
     "AIFI",
     "C1",
@@ -187,4 +191,7 @@ __all__ = (
     "YOLOESegment",
     "YOLOESegment26",
     "v10Detect",
+    "APC2f",
+    "APBottleneck", 
+    "PConv",
 )
